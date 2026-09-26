@@ -1,206 +1,168 @@
 <div align="center">
 
-# RadarPillars: Reproduction on View-of-Delft
+# CVFusion
 
-**Radar-only 3D object detection — OpenPCDet-based reproduction of [Musiat et al., IROS 2024](https://arxiv.org/abs/2408.05020)**
+**Camera–4D Radar Fusion for 3D Object Detection on View-of-Delft**
+
+[Best Stage1 result](#stage1-result) · [Evaluation](#evaluation) · [Training](#training) · [Technical report](docs/CVFUSION_STAGE1_BEST.md)
 
 </div>
 
-**RadarPillars** reproduction for **4D mmWave radar** 3D object detection on the **View-of-Delft (VoD)** dataset, built on **OpenPCDet**. This repo reproduces and **beats the published RadarPillars paper by +1.86 mAP_3D** (52.56 vs 50.70, R11) using radar point clouds only — no camera, no LiDAR. **Pretrained weights included** (Git LFS) so you can evaluate without retraining. Keywords: View-of-Delft, VoD, 4D radar, automotive radar perception, autonomous driving, PointPillars, 3D detection.
+This repository contains an OpenPCDet-based reproduction and engineering
+implementation of CVFusion on the View-of-Delft (VoD) dataset. The checked-in
+snapshot is the highest independently verified **Stage1** state produced by
+this project. It fuses five-frame 4D radar point clouds with camera features
+and includes the corresponding checkpoint through Git LFS.
 
----
+## Stage1 result
 
-## Headline
+The checkpoint was evaluated on all 1,296 samples of the VoD validation split.
+Metrics below are 3D AP_R11.
 
-| Method | Car | Ped | Cyc | mAP_3D (R11) |
-|---|:---:|:---:|:---:|:---:|
-| MAFF-Net (PV-RCNN, 2025) | 42.3 | 46.8 | 74.7 | 54.6 |
-| SCKD (2025) | 41.9 | 43.5 | 70.8 | 52.1 |
-| **Ours — best seed** | **41.6** | **44.8** | 71.3 | **52.56** |
-| SMURF (2023) | 42.3 | 39.1 | 71.5 | 51.0 |
-| **RadarPillars (paper)** | 41.1 | 38.6 | 72.6 | **50.70** |
-| CenterPoint baseline | 33.9 | 39.0 | 66.9 | 46.6 |
-| PointPillars baseline | 37.9 | 31.2 | 65.7 | 45.0 |
+| Class | Evaluation IoU | 3D AP_R11 |
+|---|---:|---:|
+| Car | 0.50 | 42.3078 |
+| Pedestrian | 0.25 | 45.5489 |
+| Cyclist | 0.25 | 69.8962 |
+| **mAP** | — | **52.5843** |
 
-Best checkpoint (mAP_3D 52.56, seed s3 @ epoch 60): [`weights/radarpillar_vod_best_map52.56.pth`](weights/radarpillar_vod_best_map52.56.pth) — tracked via [Git LFS](https://git-lfs.github.com/). After `git clone`, run `git lfs pull` to fetch it.
-Full ablation, per-seed logs, hyperparameter tables → [`experiments/RESULTS.md`](experiments/RESULTS.md).
+Final-box recall is 58.4019% at IoU 0.25. The verified optimum is epoch 78,
+iteration 50154.
 
----
+| Artifact | Path |
+|---|---|
+| Active configuration | `tools/cfgs/vod_models/vod_cvfusion_active_stage1_best.yaml` |
+| Resolved experiment configuration | `tools/cfgs/vod_models/vod_cvfusion_paper_stage1_zvalid.yaml` |
+| Stage1 checkpoint | `output/cfgs/vod_models/vod_cvfusion_paper_stage1_zvalid/paper_stage1_zvalid_v1/ckpt/checkpoint_epoch_78.pth` |
+| Detailed report | [`docs/CVFUSION_STAGE1_BEST.md`](docs/CVFUSION_STAGE1_BEST.md) |
 
-## Full VoD Radar-Only Leaderboard
+Checkpoint SHA-256:
 
-Comprehensive comparison across radar-only methods reporting on the View-of-Delft validation set (Entire Annotated Area, 3D AP %, R11). Combines published numbers with the [Awesome-3D-Detection-with-4D-Radar](https://github.com/liuzengyun/Awesome-3D-Detection-with-4D-Radar) catalog.
-
-| Rank | Method | Year | Car | Ped | Cyc | mAP_3D |
-|:---:|---|:---:|:---:|:---:|:---:|:---:|
-| 1 | MAFF-Net | 25'RA-L | 42.3 | 46.8 | **74.7** | **54.6** |
-| 2 | **Ours (dense + NMS=0.20, new)** ¹ | 2026 | 38.89 | **49.16** | 73.70 | **53.92** |
-| 3 | **Ours (rot s3, published)** ² | 2026 | 41.6 | 44.8 | 71.3 | 52.56 |
-| 4 | SCKD | 25'AAAI | 41.89 | 43.51 | 70.83 | 52.08 |
-| 5 | Dual-View Radar Reconstruction ★ | 26'Elec.Lett. | — | — | — | 52.07 |
-| 6 | RadarGaussianDet3D | 25 | 40.7 | 42.4 | 73.0 | 52.0 |
-| 7 | PSTOPS | 25 | — | — | — | 50.99 |
-| 8 | SMURF | 23'TIV | 42.31 | 39.09 | 71.50 | 50.97 |
-| 9 | RadarPillars (paper) | 24'IROS | 41.1 | 38.6 | 72.6 | 50.70 |
-| 10 | RadarNeXt | 25 | 37.44 | 41.83 | 72.16 | 50.48 |
-| 11 | MUFASA | 24'ICANN | **43.10** | 38.97 | 68.65 | 50.24 |
-| 12 | SMIFormer | 23 | 39.53 | 41.88 | 64.91 | 48.77 |
-| 13 | CenterPoint (baseline) | — | 33.87 | 39.01 | 66.85 | 46.58 |
-| 14 | DR-Net ★ | 25'TCSVT | — | — | — | 45.24 |
-| 15 | PointPillars (baseline) | — | 37.92 | 31.24 | 65.66 | 44.94 |
-| 16 | RPFA-Net (re-impl) | 21'ITSC | 33.45 | 26.42 | 56.34 | 38.75 |
-
-¹ Single-seed result (fixed seed 666). Mechanism: anchor `feature_map_stride 2→1` (denser anchor grid, `UPSAMPLE_STRIDES [1,2,4]→[2,4,8]`) over the multi-class baseline, plus post-hoc `NMS_THRESH 0.10→0.20` sweep tuned for crowded-pedestrian recall. Numbers from `checkpoint_best.pth` (early-stop weighted-mean R40 selected ep71). Multi-seed confirmation pending; observed Ped gain (+4.7 R11 vs baseline 44.49) far exceeds the 3-seed std (~1 mAP) of the baseline.
-
-² Published checkpoint — best of 3 random-seed runs; weights tracked via Git LFS above.
-
-★ = added from [Awesome-3D-Detection-with-4D-Radar](https://github.com/liuzengyun/Awesome-3D-Detection-with-4D-Radar). Per-class breakdown not extracted from source.
-
-Full provenance + Driving Corridor table: [`docs/sota_comparison.tex`](docs/sota_comparison.tex).
-
----
+```text
+a245ad1364f898bfa99a1df5bdbc11cdbf5fd6f2c9543c1e3aec13f28edf45ad
+```
 
 ## Architecture
 
+```text
+Five-frame radar [x,y,z,rcs,v_r,v_r_comp,time]
+  -> 0.05 x 0.05 x 0.10 m voxelization + MeanVFE
+  -> VoxelBackBone16xRGIter sparse 3D backbone
+  -> three radar BEV scales with max-height compression
+                                                    \
+RGB 384 x 608 -> frozen Swin-T stage 0              +-> RGIter fusion
+             -> 64-bin depth distribution -> BEV lift /
+  -> aligned 128-channel fused BEV
+  -> AnchorHeadSingle
+  -> Car / Pedestrian / Cyclist 3D boxes
 ```
-Radar pcd (N,7)
-  → PillarVFE (voxelize + Doppler decomp: vx, vy via atan2)
-  → PillarAttention (masked self-attention, C=E=32)
-  → PointPillarScatter (320×320×32 BEV)
-  → BaseBEVBackbone (3-block 2D CNN, uniform C=32)
-  → AnchorHeadSingle (Car / Pedestrian / Cyclist)
-```
 
-Key implementation details:
-- **Velocity decomposition** in VFE: `vx = v_r_comp·cos(φ)`, `vy = v_r_comp·sin(φ)`, `φ = atan2(y, x)`
-- **Physics-consistent augmentation**: velocity vectors rotated/flipped with point coordinates (fixes a bug in OpenPCDet that assumed nuScenes column layout)
-- **PillarAttention** with key-padding mask so empty pillars don't poison attention scores
-- **`FFN_CHANNELS` config-driven** in `pillar_attention.py` (was hardcoded `*2` before)
+The key correction in this snapshot is **Z-valid camera lifting**. A projected
+depth hypothesis is accumulated into BEV only if its full 3D location is
+inside the configured detector volume. This prevents image-ray samples above
+or below the radar volume from contaminating valid XY cells.
 
----
+The active Stage1 configuration uses:
 
-## Demo
+- frozen ImageNet-pretrained Swin-T image features;
+- three radar scales at approximately 0.2, 0.4 and 0.8 m resolution;
+- radar-guided iterative image/radar fusion;
+- max pooling along sparse height cells;
+- no depth or gate auxiliary loss;
+- no experimental height-attention or BEV RPN block;
+- no Stage2/RoI head.
 
-Qualitative results on View-of-Delft validation frames using the **v1.0 checkpoint** (mAP_3D 52.56). Left: ground truth (solid). Right: GT + model predictions (dashed, with confidence). Radar points are colored by RCS.
+## Installation
 
-<p align="center">
-  <img src="docs/visualizations/bev_00373.png" width="100%" alt="BEV GT vs predictions, VoD sample 00373"><br>
-  <img src="docs/visualizations/bev_00360.png" width="100%" alt="BEV GT vs predictions, VoD sample 00360">
-</p>
+The verified environment is:
 
-Reproduce these from a checkpoint — run inference:
+- Python 3.10.14
+- PyTorch 2.4.1 with CUDA 12.1
+- torchvision 0.19.1
+- spconv 2.3.6
+- NVIDIA driver 550.67
+
+Install Git LFS before cloning or pull the model afterward:
 
 ```bash
-# Inference → writes result.pkl under output/.../eval/
-python tools/test.py \
-  --cfg_file tools/cfgs/vod_models/vod_radarpillar_rot.yaml \
-  --ckpt weights/radarpillar_vod_best_map52.56.pth
-```
+git clone https://github.com/tang125810/CVFusion.git
+cd CVFusion
+git lfs pull
 
----
-
-## Install
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -U pip
 python setup.py develop
 ```
 
-Requirements: Python 3.8+, PyTorch 2.4+, CUDA 12.x, spconv 2.3.6.
+The pretrained Swin-T file `swin_t-704ceda3.pth` is not redistributed here.
+The validated configuration references `../../weights/swin_t-704ceda3.pth`
+relative to the repository working directory. Download the torchvision
+Swin-T weight and place it there, or update `PRETRAINED` in a copied config.
 
----
+## Dataset
 
-## Data
+Prepare the five-frame View-of-Delft radar data in this layout:
 
-```
+```text
 data/VoD/view_of_delft_PUBLIC/radar_5frames/
-  ├── ImageSets/{train,val,test}.txt
-  ├── training/{velodyne,label_2,calib,image_2}/
-  └── testing/velodyne/
+  ImageSets/{train,val,test}.txt
+  training/{velodyne,label_2,calib,image_2}/
+  testing/{velodyne,calib,image_2}/
 ```
 
-Generate info pkl + GT db:
-```bash
-python -m pcdet.datasets.vod.vod_dataset create_vod_infos \
-    tools/cfgs/dataset_configs/vod_dataset_radar.yaml
-```
+The verified split contains 5,139 training frames and 1,296 validation frames.
+Dataset files and generated `.pkl` indexes are intentionally not stored in
+Git.
 
----
-
-## Train
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python tools/train.py \
-  --cfg_file tools/cfgs/vod_models/vod_radarpillar_rot.yaml \
-  --batch_size 8 --extra_tag <run_name> --workers 4
-```
-
-3-seed multi-run (matches the headline number):
-```bash
-bash experiments/chain_scripts/multiseed_v2.sh
-```
-
----
-
-## Eval
+## Evaluation
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python tools/test.py \
-  --cfg_file tools/cfgs/vod_models/vod_radarpillar_rot.yaml \
-  --ckpt weights/radarpillar_vod_best_map52.56.pth
+  --cfg_file tools/cfgs/vod_models/vod_cvfusion_active_stage1_best.yaml \
+  --batch_size 2 \
+  --workers 2 \
+  --ckpt output/cfgs/vod_models/vod_cvfusion_paper_stage1_zvalid/paper_stage1_zvalid_v1/ckpt/checkpoint_epoch_78.pth \
+  --extra_tag stage1_best_verify \
+  --eval_tag manual_verify
 ```
 
----
+Expected class AP values are `42.3078 / 45.5489 / 69.8962`, giving 52.5843
+mAP. Verify the checkpoint hash and dependency versions before investigating
+small numerical differences.
 
-## Configs
+## Training
 
-**Baseline (RadarPillars reproduction):**
+The verified run used four RTX 3090 GPUs, total batch size 8, 80 epochs, a
+fixed random seed, and Adam OneCycle with learning rate 0.01.
 
-| File | Purpose |
-|---|---|
-| `tools/cfgs/vod_models/vod_radarpillar.yaml` | paper-faithful baseline (no rotation) |
-| `tools/cfgs/vod_models/vod_radarpillar_rot.yaml` | **rotation-augmented variant — produced the headline result** |
-
-### Pedestrian-Focused Experiments
-
-These configs are a separate line of work that targets the hardest class
-(pedestrian) on top of the rotation-augmented baseline. They are **not** part of
-the core RadarPillars reproduction above. The full write-up is in the paper
-(PDF on the [Releases](../../releases) page); the configs below let you
-reproduce its numbers.
-
-| File | Change vs. `_rot` baseline | Result (R11 3D AP) |
-|---|---|---|
-| `tools/cfgs/vod_models/vod_radarpillar_rot_dense.yaml` | denser anchor grid (`feature_map_stride` 2→1, `UPSAMPLE_STRIDES` [1,2,4]→[2,4,8]) + `NMS_THRESH` 0.10→0.20 | **53.92 mAP** (Car 38.89 / Ped **49.16** / Cyc 73.70) — best |
-| `tools/cfgs/vod_models/vod_radarpillar_ped.yaml` | single-class pedestrian (control; anchors/voxel unchanged) | Ped −2.9 vs 3-class — co-training helps the hard class |
-| `tools/cfgs/vod_models/vod_radarpillar_rot_voxel.yaml` | finer pillar `VOXEL_SIZE` 0.16→0.08 at fixed anchor stride (control) | Car −5.75 — pillar fragmentation on sparse radar |
-
-`_rot_dense` is the recommended pedestrian config; the other two are controls
-that isolate why the dense-anchor change works.
-
----
-
-## Citation
-
-```bibtex
-@inproceedings{musiat2024radarpillars,
-  title     = {RadarPillars: Efficient Object Detection from 4D Radar Point Clouds},
-  author    = {Musiat, Alexander and Reichardt, Laurenz and Schulze, Michael and Wasenm{\"u}ller, Oliver},
-  booktitle = {Proc. IEEE/RSJ Int. Conf. Intelligent Robots and Systems (IROS)},
-  year      = {2024}
-}
-
-@misc{openpcdet2020,
-  title  = {OpenPCDet: An Open-source Toolbox for 3D Object Detection from Point Clouds},
-  author = {OpenPCDet Development Team},
-  year   = {2020},
-  url    = {https://github.com/open-mmlab/OpenPCDet}
-}
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+python -m torch.distributed.launch \
+  --nproc_per_node=4 \
+  tools/train.py \
+  --launcher pytorch \
+  --cfg_file tools/cfgs/vod_models/vod_cvfusion_active_stage1_best.yaml \
+  --batch_size 8 \
+  --epochs 80 \
+  --workers 2 \
+  --ckpt_save_interval 1 \
+  --max_ckpt_save_num 30 \
+  --extra_tag stage1_best_reproduction
 ```
 
----
+Evaluate late-epoch checkpoints on the complete validation set. Training loss
+alone is not a reliable model-selection metric for this experiment.
+
+## Repository lineage
+
+This implementation is built on the
+[`fthbng77/RadarPillar`](https://github.com/fthbng77/RadarPillar) reproduction,
+which in turn is based on
+[`OpenPCDet`](https://github.com/open-mmlab/OpenPCDet). The upstream RadarPillar
+history is intentionally preserved for attribution and traceability; the
+current project entry point and included checkpoint are the CVFusion Stage1
+artifacts listed above.
 
 ## License
 
-Released under the Apache 2.0 License — see [LICENSE](LICENSE). This project is built on top of [OpenPCDet](https://github.com/open-mmlab/OpenPCDet), which is itself Apache 2.0 licensed.
+The inherited code is distributed under the Apache 2.0 license. See
+[`LICENSE`](LICENSE) and retain the notices and citations required by the
+upstream projects.
