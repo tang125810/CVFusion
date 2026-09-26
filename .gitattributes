@@ -1,2 +1,3 @@
 weights/*.pth filter=lfs diff=lfs merge=lfs -text
 output/cfgs/vod_models/vod_cvfusion_paper_stage1_zvalid/paper_stage1_zvalid_v1/ckpt/checkpoint_epoch_78.pth filter=lfs diff=lfs merge=lfs -text
+output/cfgs/vod_models/vod_cvfusion_paper_stage1_imgmulti/paper_stage1_imgmulti_v1/ckpt/checkpoint_epoch_72.pth filter=lfs diff=lfs merge=lfs -text
