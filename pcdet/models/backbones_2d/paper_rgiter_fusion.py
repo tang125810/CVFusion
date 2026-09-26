@@ -52,27 +52,49 @@ class PaperRGIterFusion(nn.Module):
             raise ValueError('RGIter fusion requires exactly three radar scales')
         self.num_bev_features = output_channels
 
+        # View transformation implementation.  'scatter' is the verified
+        # ray/depth-bin scatter used by the epoch-78 checkpoint; 'sampling' is
+        # the reference-style alternative (LXL/CaDDN direction, cited by the
+        # paper in section 3.2.1): build BEV cell centres, push them into the
+        # image and *gather* bilinearly sampled image features weighted by the
+        # depth distribution.  The two differ in interpolation, coverage and
+        # gradient path, so they must be compared as separate candidates.
+        self.vt_mode = str(model_cfg.get('VT_MODE', 'scatter')).lower()
+        if self.vt_mode not in ('scatter', 'sampling', 'zero'):
+            raise ValueError('VT_MODE must be scatter, sampling or zero, got %r' % self.vt_mode)
+        self.vt_num_z = int(model_cfg.get('VT_NUM_Z', 8))
+
         network = swin_t(weights=None)
         weights_path = str(model_cfg.get('PRETRAINED', ''))
-        if weights_path:
-            if not os.path.isfile(weights_path):
-                raise FileNotFoundError('Swin-T weights not found: %s' % weights_path)
-            state = torch.load(weights_path, map_location='cpu', weights_only=True)
-            network.load_state_dict(state.get('model', state), strict=True)
-        # Paper FI has H/4 x W/4 resolution, corresponding to Swin stage 0.
-        self.image_backbone = network.features[:2]
-        for parameter in self.image_backbone.parameters():
-            parameter.requires_grad_(False)
-        self.image_backbone.eval()
+        if self.vt_mode == 'zero':
+            # Radar-only control: the camera branch is not built at all.  This
+            # is the *trained* radar-only baseline the technical report asks for
+            # ("推理消融存在分布偏移，不能取代 radar-only 重新训练"); the inference
+            # ablation in run_image_ablation.py cannot answer this question.
+            # Not constructing the branch (rather than constructing and
+            # ignoring it) also keeps DDP happy: ignored parameters would never
+            # receive a gradient.
+            self.image_variant = 'none'
+            self.image_backbone = None
+            self.depth_head = None
+            self.image_proj = None
+        else:
+            if weights_path:
+                if not os.path.isfile(weights_path):
+                    raise FileNotFoundError('Swin-T weights not found: %s' % weights_path)
+                state = torch.load(weights_path, map_location='cpu', weights_only=True)
+                network.load_state_dict(state.get('model', state), strict=True)
+            self._build_image_backbone(network, model_cfg)
         self.register_buffer(
             'image_mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
         self.register_buffer(
             'image_std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
-        self.depth_head = nn.Sequential(
-            nn.Conv2d(96, 128, 3, padding=1), nn.ReLU(inplace=True),
-            nn.Conv2d(128, self.depth_bins, 1))
-        self.image_proj = nn.Conv2d(96, camera_channels, 1)
+        if self.vt_mode != 'zero':
+            self.depth_head = nn.Sequential(
+                nn.Conv2d(96, 128, 3, padding=1), nn.ReLU(inplace=True),
+                nn.Conv2d(128, self.depth_bins, 1))
+            self.image_proj = nn.Conv2d(96, camera_channels, 1)
         self.weight_conv = nn.ModuleList([
             nn.Conv2d(channels, 1, 3, padding=1) for channels in radar_channels])
         self.iter_conv = nn.ModuleList([
@@ -114,6 +136,83 @@ class PaperRGIterFusion(nn.Module):
             # Balanced occupancy BCE has a neutral prior of 0.5.  This also
             # avoids an abrupt removal of camera features during fine-tuning.
             nn.init.zeros_(layer.bias)
+
+    def _lift_to_bev_sampling(self, image_features, depth_probability, intrinsics,
+                              camera_to_lidar, lidar_aug_matrix, bev_h, bev_w):
+        """Reference-style view transformation: cell centres gather image features.
+
+        Instead of shooting one ray per feature-map pixel and scattering every
+        depth hypothesis into a BEV cell (``_lift_to_bev``), this builds the BEV
+        voxel centres of the *detector* volume, projects them into the image and
+        bilinearly samples the image feature map with ``grid_sample``, weighting
+        each sample by the depth distribution at its pixel.  This is the
+        direction taken by the view transforms the paper cites (CaDDN, LXL):
+        the geometry is evaluated at the target voxel centres with interpolation
+        on the image side, not at image pixel centres with nearest-cell
+        scattering.
+
+        The output has the same shape and the same BEV cell convention as
+        ``_lift_to_bev`` so the rest of the network is untouched.
+        """
+        batch, channels, feat_h, feat_w = image_features.shape
+        device, dtype = image_features.device, image_features.dtype
+        image_h, image_w = self.model_cfg.IMAGE_SIZE
+        x_min, y_min, z_min = self.point_cloud_range[:3]
+        x_max, y_max, z_max = self.point_cloud_range[3:]
+        x_res = (x_max - x_min) / bev_w
+        y_res = (y_max - y_min) / bev_h
+        z_res = (z_max - z_min) / max(self.vt_num_z, 1)
+
+        xs = x_min + (torch.arange(bev_w, device=device, dtype=torch.float32) + 0.5) * x_res
+        ys = y_min + (torch.arange(bev_h, device=device, dtype=torch.float32) + 0.5) * y_res
+        zs = z_min + (torch.arange(self.vt_num_z, device=device, dtype=torch.float32) + 0.5) * z_res
+        grid_z, grid_y, grid_x = torch.meshgrid(zs, ys, xs, indexing='ij')
+        points = torch.stack((grid_x, grid_y, grid_z,
+                              torch.ones_like(grid_x)), dim=-1).reshape(-1, 4)   # (M, 4)
+
+        output = image_features.new_zeros((batch, channels, bev_h, bev_w))
+        for batch_idx in range(batch):
+            # augmented radar frame -> original radar frame -> camera
+            to_original = torch.linalg.inv(lidar_aug_matrix[batch_idx].float())
+            world = points @ to_original.T
+            cam = world @ torch.linalg.inv(camera_to_lidar[batch_idx].float()).T
+            depth = cam[:, 2]
+            uv = cam[:, :3] @ intrinsics[batch_idx].float().T
+            u = uv[:, 0] / depth.clamp_min(1e-5)
+            v = uv[:, 1] / depth.clamp_min(1e-5)
+
+            # feature-grid coordinate of the sampled pixel (pixel-centre convention)
+            gx = (u + 0.5) * (float(feat_w) / float(image_w)) - 0.5
+            gy = (v + 0.5) * (float(feat_h) / float(image_h)) - 0.5
+            norm_x = (2.0 * gx + 1.0) / float(feat_w) - 1.0
+            norm_y = (2.0 * gy + 1.0) / float(feat_h) - 1.0
+            sample_grid = torch.stack((norm_x, norm_y), dim=-1).view(1, -1, 1, 2)
+
+            valid = (depth > self.depth_min) & (depth < self.depth_max)
+            valid &= (norm_x >= -1.0) & (norm_x <= 1.0) & (norm_y >= -1.0) & (norm_y <= 1.0)
+
+            sampled = F.grid_sample(image_features[batch_idx:batch_idx + 1], sample_grid,
+                                    mode='bilinear', padding_mode='zeros',
+                                    align_corners=False).view(channels, -1)      # (C, M)
+
+            # depth weight: bilinear read of the depth distribution at the bin
+            # the cell actually falls into
+            bin_coord = (depth - self.depth_min) / (self.depth_max - self.depth_min) \
+                * (self.depth_bins - 1)
+            bin_lo = torch.floor(bin_coord).clamp(0, self.depth_bins - 1).long()
+            bin_hi = (bin_lo + 1).clamp(0, self.depth_bins - 1)
+            frac = (bin_coord - bin_lo.to(bin_coord.dtype)).clamp(0.0, 1.0)
+            prob_flat = depth_probability[batch_idx].reshape(self.depth_bins, -1)
+            pix_idx = (torch.floor(gx + 0.5).long().clamp(0, feat_w - 1)
+                       + torch.floor(gy + 0.5).long().clamp(0, feat_h - 1) * feat_w)
+            prob_lo = prob_flat[bin_lo, pix_idx]
+            prob_hi = prob_flat[bin_hi, pix_idx]
+            weight = (prob_lo * (1.0 - frac) + prob_hi * frac) * valid.to(dtype)
+
+            weighted = (sampled.float() * weight[None, :]).view(
+                channels, self.vt_num_z, bev_h, bev_w).sum(dim=1)
+            output[batch_idx] = weighted.to(dtype)
+        return output
 
     def _radar_depth_loss(self, depth_logits, batch_dict):
         """Supervise image depth with radar points projected into the image."""
@@ -159,7 +258,8 @@ class PaperRGIterFusion(nn.Module):
 
     def train(self, mode=True):
         super().train(mode)
-        self.image_backbone.eval()
+        if self.image_backbone is not None:
+            self.image_backbone.eval()
         return self
 
     def _lift_to_bev(self, image_features, depth_probability, intrinsics,
@@ -212,20 +312,96 @@ class PaperRGIterFusion(nn.Module):
                 0, linear, (lifted.float() * probability[:, None].float()).to(dtype))
         return output
 
+    def _build_image_backbone(self, network, model_cfg):
+        """Paper FI is an H/4 x W/4 map.  Two ways to obtain it from the same
+        frozen ImageNet Swin-T:
+
+        * ``stage0`` - the choice this project has been using: patch embedding
+          plus stage 0 only, i.e. the 96-channel H/4 map;
+        * ``multi``  - single-variable alternative: run the full backbone and
+          aggregate stages 0..3 back to H/4 with 1x1 laterals and a 3x3 fusion,
+          keeping the depth head, the image projection, the view transform and
+          the RPN untouched.
+        """
+        self.image_variant = str(model_cfg.get('IMAGE_BACKBONE', 'stage0')).lower()
+        if self.image_variant not in ('stage0', 'multi'):
+            raise ValueError('IMAGE_BACKBONE must be stage0 or multi, got %r'
+                             % self.image_variant)
+        if self.image_variant == 'multi':
+            self.image_backbone = network.features          # patch embed .. stage 3
+            self.image_lateral = nn.ModuleList([
+                nn.Conv2d(channels, 96, 1) for channels in (96, 192, 384, 768)])
+            self.image_fuse = nn.Sequential(
+                nn.Conv2d(96 * 4, 96, 3, padding=1, bias=False),
+                nn.BatchNorm2d(96, eps=1e-3, momentum=0.01),
+                nn.ReLU(inplace=True))
+        else:
+            self.image_backbone = network.features[:2]
+        for parameter in self.image_backbone.parameters():
+            parameter.requires_grad_(False)
+        self.image_backbone.eval()
+
+    def _extract_image_features(self, images):
+        """Frozen Swin-T forward, returning either the H/4 stage-0 map or the pyramid."""
+        if self.image_variant == 'stage0':
+            return self.image_backbone(images)
+        x = self.image_backbone[0](images)          # patch embedding -> H/4, 96
+        x = self.image_backbone[1](x)               # stage 0 -> H/4, 96
+        stage0 = x
+        x = self.image_backbone[3](self.image_backbone[2](x))   # H/8, 192
+        stage1 = x
+        x = self.image_backbone[5](self.image_backbone[4](x))   # H/16, 384
+        stage2 = x
+        x = self.image_backbone[7](self.image_backbone[6](x))   # H/32, 768
+        return (stage0, stage1, stage2, x)
+
+    def _aggregate_image_features(self, pyramid):
+        """1x1 laterals + bilinear upsample to H/4 + 3x3 fusion -> 96 channels."""
+        target = pyramid[0].shape[1:3]
+        laterals = []
+        for idx, feature in enumerate(pyramid):
+            feature = feature.permute(0, 3, 1, 2).contiguous()
+            feature = self.image_lateral[idx](feature)
+            if feature.shape[-2:] != target:
+                feature = F.interpolate(feature, size=target, mode='bilinear',
+                                        align_corners=False)
+            laterals.append(feature)
+        return self.image_fuse(torch.cat(laterals, dim=1))
+
     def forward(self, batch_dict):
         radar_scales = batch_dict['multi_scale_2d_features']
         radar_bevs = [radar_scales[key] for key in self.radar_keys]
-        with torch.no_grad():
-            images = (batch_dict['images'] - self.image_mean) / self.image_std
-            image_features = self.image_backbone(images).permute(0, 3, 1, 2).contiguous()
-        depth_logits = self.depth_head(image_features.float())
-        depth_probability = torch.softmax(depth_logits, dim=1)
-        image_features = self.image_proj(image_features.float())
-        batch_dict['image_front_features'] = image_features
-        camera_bev = self._lift_to_bev(
-            image_features, depth_probability, batch_dict['camera_intrinsics'],
-            batch_dict['camera_to_lidar'], batch_dict['lidar_aug_matrix'],
-            radar_bevs[0].shape[-2], radar_bevs[0].shape[-1])
+        if self.vt_mode == 'zero':
+            # Radar-only control: the camera BEV is exactly zero, so Eq. (2)
+            # contributes nothing and the fusion reduces to a radar-only
+            # multi-scale BEV tower trained with the identical schedule.
+            camera_bev = radar_bevs[0].new_zeros(
+                (radar_bevs[0].shape[0], radar_bevs[0].shape[1],
+                 radar_bevs[0].shape[-2], radar_bevs[0].shape[-1]))
+            batch_dict['camera_spatial_features_2d'] = camera_bev
+        else:
+            with torch.no_grad():
+                images = (batch_dict['images'] - self.image_mean) / self.image_std
+                if self.image_variant == 'stage0':
+                    image_features = self.image_backbone(images).permute(0, 3, 1, 2).contiguous()
+                else:
+                    image_features = self._extract_image_features(images)
+            if self.image_variant != 'stage0':
+                image_features = self._aggregate_image_features(image_features)
+            depth_logits = self.depth_head(image_features.float())
+            depth_probability = torch.softmax(depth_logits, dim=1)
+            image_features = self.image_proj(image_features.float())
+            batch_dict['image_front_features'] = image_features
+            if self.vt_mode == 'sampling':
+                camera_bev = self._lift_to_bev_sampling(
+                    image_features, depth_probability, batch_dict['camera_intrinsics'],
+                    batch_dict['camera_to_lidar'], batch_dict['lidar_aug_matrix'],
+                    radar_bevs[0].shape[-2], radar_bevs[0].shape[-1])
+            else:
+                camera_bev = self._lift_to_bev(
+                    image_features, depth_probability, batch_dict['camera_intrinsics'],
+                    batch_dict['camera_to_lidar'], batch_dict['lidar_aug_matrix'],
+                    radar_bevs[0].shape[-2], radar_bevs[0].shape[-1])
 
         fused = []
         camera_scale = camera_bev
@@ -267,7 +443,7 @@ class PaperRGIterFusion(nn.Module):
             batch_dict['rpn_multi_scale_2d_features'] = proposal_dict[
                 'multi_scale_2d_features']
         batch_dict['spatial_features_2d'] = proposal_features
-        if self.training:
+        if self.training and self.vt_mode != 'zero':
             self.depth_loss = self._radar_depth_loss(depth_logits, batch_dict)
             self.gate_loss = (torch.stack(gate_losses).mean() if gate_losses
                               else depth_logits.sum() * 0.0)

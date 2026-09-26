@@ -39,24 +39,32 @@ class MultiScaleHeightCompression(nn.Module):
         # tensor.  The final 1x1 fusion starts as an exact max-pool identity so
         # old checkpoints remain a stable warm-start; training can then learn
         # how much height-aware context to mix in.
-        self.height_position = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(1, in_ch), nn.ReLU(inplace=True),
-                nn.Linear(in_ch, in_ch))
-            for in_ch in in_channels
-        ])
-        self.height_score = nn.ModuleList([
-            nn.Linear(in_ch, 1) for in_ch in in_channels
-        ])
-        self.height_fusion = nn.ModuleList([
-            nn.Conv2d(in_ch * 2, in_ch, 1, bias=False)
-            for in_ch in in_channels
-        ])
-        for in_ch, layer in zip(in_channels, self.height_fusion):
-            nn.init.zeros_(layer.weight)
-            with torch.no_grad():
-                channel = torch.arange(in_ch)
-                layer.weight[channel, channel, 0, 0] = 1.0
+        #
+        # These parameters are only created when the attention path is actually
+        # selected.  Creating them unconditionally made DDP abort with "expected
+        # to have finished reduction in the prior iteration": under
+        # POOL_METHOD=max nothing touches them, so they never receive a
+        # gradient.  The max-pooling structure - and therefore the state_dict of
+        # the verified epoch-78 checkpoint - is unchanged by this condition.
+        if self.pool_method == 'height_attention':
+            self.height_position = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(1, in_ch), nn.ReLU(inplace=True),
+                    nn.Linear(in_ch, in_ch))
+                for in_ch in in_channels
+            ])
+            self.height_score = nn.ModuleList([
+                nn.Linear(in_ch, 1) for in_ch in in_channels
+            ])
+            self.height_fusion = nn.ModuleList([
+                nn.Conv2d(in_ch * 2, in_ch, 1, bias=False)
+                for in_ch in in_channels
+            ])
+            for in_ch, layer in zip(in_channels, self.height_fusion):
+                nn.init.zeros_(layer.weight)
+                with torch.no_grad():
+                    channel = torch.arange(in_ch)
+                    layer.weight[channel, channel, 0, 0] = 1.0
         self.num_bev_features = out_channels[1]
 
     @staticmethod
