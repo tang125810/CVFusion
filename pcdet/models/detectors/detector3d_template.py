@@ -21,7 +21,7 @@ class Detector3DTemplate(nn.Module):
 
         self.module_topology = [
             'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
-            'backbone_2d', 'dense_head',  'point_head', 'roi_head'
+            'backbone_2d', 'image_fusion', 'dense_head', 'point_head', 'roi_head'
         ]
 
     @property
@@ -30,6 +30,18 @@ class Detector3DTemplate(nn.Module):
 
     def update_global_step(self):
         self.global_step += 1
+
+    def train(self, mode=True):
+        super().train(mode)
+        if mode and getattr(self, 'freeze_detector_for_roi', False):
+            for name, module in self.named_children():
+                if name != 'roi_head':
+                    module.eval()
+        if mode and getattr(self, 'freeze_non_image_fusion', False):
+            for name, module in self.named_children():
+                if name not in ('image_fusion', 'dense_head'):
+                    module.eval()
+        return self
 
     def build_networks(self):
         model_info_dict = {
@@ -99,6 +111,19 @@ class Detector3DTemplate(nn.Module):
         model_info_dict['module_list'].append(backbone_2d_module)
         model_info_dict['num_bev_features'] = backbone_2d_module.num_bev_features
         return backbone_2d_module, model_info_dict
+
+    def build_image_fusion(self, model_info_dict):
+        if self.model_cfg.get('IMAGE_FUSION', None) is None:
+            return None, model_info_dict
+        image_fusion_module = backbones_2d.__all__[self.model_cfg.IMAGE_FUSION.NAME](
+            model_cfg=self.model_cfg.IMAGE_FUSION,
+            input_channels=model_info_dict['num_bev_features'],
+            point_cloud_range=model_info_dict['point_cloud_range']
+        )
+        model_info_dict['module_list'].append(image_fusion_module)
+        if hasattr(image_fusion_module, 'num_bev_features'):
+            model_info_dict['num_bev_features'] = image_fusion_module.num_bev_features
+        return image_fusion_module, model_info_dict
 
     def build_pfe(self, model_info_dict):
         if self.model_cfg.get('PFE', None) is None:

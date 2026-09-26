@@ -1,0 +1,32 @@
+_BASE_CONFIG_: tools/cfgs/vod_models/vod_cvfusion_paper_stage1.yaml
+
+# Corrected paper-aligned Stage1 run.  View lifting now rejects depth samples
+# outside the configured Z volume.  Auxiliary depth/gate objectives are kept
+# disabled because they are not part of the published training objective.
+MODEL:
+    # Locked rollback state for the best Stage1 checkpoint (epoch 78).
+    # Keep vertical max pooling and the direct 128-channel proposal path.
+    # Do not enable height attention, the experimental BEV RPN, or a RoI head.
+    MAP_TO_BEV:
+        POOL_METHOD: max
+    IMAGE_FUSION:
+        DEPTH_LOSS_WEIGHT: 0.0
+        GATE_LOSS_WEIGHT: 0.0
+        RESET_GUIDANCE_GATES: False
+        RPN_NUM_BLOCKS: 0
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.25, 0.3, 0.5, 0.7]
+
+OPTIMIZATION:
+    FIX_RANDOM_SEED: True
+    NUM_EPOCHS: 80
+    eval_interval: 5
+    early_stop:
+        enabled: True
+        metrics: ['Car_3d/moderate', 'Pedestrian_3d/moderate', 'Cyclist_3d/moderate']
+        metric_reducer: mean
+        mode: max
+        patience: 35
+        min_delta: 0.0
+        start_epoch: 5
+        save_best: True

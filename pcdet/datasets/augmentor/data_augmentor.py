@@ -46,9 +46,14 @@ class DataAugmentor(object):
         gt_boxes, points = data_dict['gt_boxes'], data_dict['points']
         for cur_axis in config['ALONG_AXIS_LIST']:
             assert cur_axis in ['x', 'y']
-            gt_boxes, points = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
-                gt_boxes, points
+            gt_boxes, points, enabled = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
+                gt_boxes, points, return_enable=True
             )
+            if enabled and 'lidar_aug_matrix' in data_dict:
+                transform = np.eye(4, dtype=np.float32)
+                axis_idx = 1 if cur_axis == 'x' else 0
+                transform[axis_idx, axis_idx] = -1
+                data_dict['lidar_aug_matrix'] = transform @ data_dict['lidar_aug_matrix']
 
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
@@ -60,11 +65,17 @@ class DataAugmentor(object):
         rot_range = config['WORLD_ROT_ANGLE']
         if not isinstance(rot_range, list):
             rot_range = [-rot_range, rot_range]
-        gt_boxes, points = augmentor_utils.global_rotation(
+        gt_boxes, points, angle = augmentor_utils.global_rotation(
             data_dict['gt_boxes'],
             data_dict['points'],
-            rot_range=rot_range
+            rot_range=rot_range,
+            return_rotation=True
         )
+        if 'lidar_aug_matrix' in data_dict:
+            c, sin = np.cos(angle), np.sin(angle)
+            transform = np.eye(4, dtype=np.float32)
+            transform[:2, :2] = np.array([[c, -sin], [sin, c]], dtype=np.float32)
+            data_dict['lidar_aug_matrix'] = transform @ data_dict['lidar_aug_matrix']
 
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
@@ -73,9 +84,14 @@ class DataAugmentor(object):
     def random_world_scaling(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.random_world_scaling, config=config)
-        gt_boxes, points = augmentor_utils.global_scaling(
-            data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE']
+        gt_boxes, points, scale = augmentor_utils.global_scaling(
+            data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE'],
+            return_scale=True
         )
+        if 'lidar_aug_matrix' in data_dict:
+            transform = np.eye(4, dtype=np.float32)
+            transform[:3, :3] *= scale
+            data_dict['lidar_aug_matrix'] = transform @ data_dict['lidar_aug_matrix']
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
         return data_dict

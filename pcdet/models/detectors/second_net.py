@@ -31,4 +31,15 @@ class SECONDNet(Detector3DTemplate):
         }
 
         loss = loss_rpn
+        image_fusion = getattr(self, 'image_fusion', None)
+        if image_fusion is not None:
+            if image_fusion.depth_loss is not None and image_fusion.depth_loss_weight > 0:
+                loss_depth = image_fusion.depth_loss * image_fusion.depth_loss_weight
+                loss = loss + loss_depth
+                tb_dict['loss_depth'] = image_fusion.depth_loss.item()
+            if image_fusion.gate_loss is not None and image_fusion.gate_loss_weight > 0:
+                loss_gate = image_fusion.gate_loss * image_fusion.gate_loss_weight
+                loss = loss + loss_gate
+                tb_dict['loss_gate'] = image_fusion.gate_loss.item()
+        tb_dict['loss'] = loss.item()
         return loss, tb_dict, disp_dict

@@ -38,7 +38,7 @@ def parse_config():
     parser.add_argument('--sync_bn', action='store_true', default=False, help='whether to use sync bn')
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='')
     parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
-    parser.add_argument('--local_rank', type=int, default=0, help='local rank for distributed training')
+    parser.add_argument('--local_rank', '--local-rank', dest='local_rank', type=int, default=0, help='local rank for distributed training')
     parser.add_argument('--max_ckpt_save_num', type=int, default=30, help='max number of saved checkpoint')
     parser.add_argument('--merge_all_iters_to_one_epoch', action='store_true', default=False, help='')
     parser.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER,
@@ -129,6 +129,39 @@ def main():
     )
 
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=train_set)
+    image_fusion_cfg = cfg.MODEL.get('IMAGE_FUSION', None)
+    freeze_detector = bool(
+        image_fusion_cfg is not None and image_fusion_cfg.get('FREEZE_DETECTOR', False)
+    )
+    train_ms_only = bool(
+        image_fusion_cfg is not None and image_fusion_cfg.get('TRAIN_MS_ONLY', False)
+    )
+    roi_head_cfg = cfg.MODEL.get('ROI_HEAD', None)
+    train_roi_only = bool(
+        roi_head_cfg is not None and roi_head_cfg.get('TRAIN_ROI_ONLY', False)
+    )
+    if train_roi_only:
+        model.freeze_detector_for_roi = True
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad_(name.startswith('roi_head.'))
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        logger.info('Frozen Stage1 detector: Stage2 trainable parameters %d / %d', trainable, total)
+    elif train_ms_only:
+        model.freeze_non_image_fusion = True
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad_(name.startswith('image_fusion.ms_'))
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        logger.info('Frozen detector and base fusion: RGIter trainable parameters %d / %d', trainable, total)
+    elif freeze_detector:
+        model.freeze_non_image_fusion = True
+        for name, parameter in model.named_parameters():
+            if not name.startswith('image_fusion.'):
+                parameter.requires_grad_(False)
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        logger.info('Frozen radar detector: trainable parameters %d / %d', trainable, total)
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model.cuda()
@@ -140,6 +173,11 @@ def main():
     last_epoch = -1
     if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
+        if (image_fusion_cfg is not None and
+                image_fusion_cfg.get('RESET_GUIDANCE_GATES', False) and
+                hasattr(model, 'image_fusion')):
+            model.image_fusion.reset_guidance_gates()
+            logger.info('Reset RGIter guidance gates after loading pretrained weights')
 
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist, optimizer=optimizer, logger=logger)

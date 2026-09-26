@@ -821,6 +821,15 @@ def get_vod_eval_result(gt_annos, dt_annos, current_classes, PR_detail_dict=None
                                      f"{mAPaos_R40[j, 2, i]:.2f}"))
 
             if i == 0:
+                # VoD papers, including CVFusion, report the original
+                # 11-point AP. Expose it to the training loop as well as R40
+                # so checkpoint selection can use the published metric.
+                ret_dict['%s_3d/easy' % class_to_name[curcls]] = mAP3d[j, 0, 0]
+                ret_dict['%s_3d/moderate' % class_to_name[curcls]] = mAP3d[j, 1, 0]
+                ret_dict['%s_3d/hard' % class_to_name[curcls]] = mAP3d[j, 2, 0]
+                ret_dict['%s_bev/easy' % class_to_name[curcls]] = mAPbev[j, 0, 0]
+                ret_dict['%s_bev/moderate' % class_to_name[curcls]] = mAPbev[j, 1, 0]
+                ret_dict['%s_bev/hard' % class_to_name[curcls]] = mAPbev[j, 2, 0]
                 ret_dict['%s_3d/easy_R40' % class_to_name[curcls]] = mAP3d_R40[j, 0, 0]
                 ret_dict['%s_3d/moderate_R40' % class_to_name[curcls]] = mAP3d_R40[j, 1, 0]
                 ret_dict['%s_3d/hard_R40' % class_to_name[curcls]] = mAP3d_R40[j, 2, 0]

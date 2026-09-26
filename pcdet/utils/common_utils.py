@@ -142,16 +142,17 @@ def init_dist_pytorch(tcp_port, local_rank, backend='nccl'):
     if mp.get_start_method(allow_none=True) is None:
         mp.set_start_method('spawn')
 
+    # torchrun exports LOCAL_RANK instead of appending --local-rank on recent
+    # PyTorch versions.  Keep the argument as a fallback for the legacy
+    # torch.distributed.launch entry point.
+    local_rank = int(os.environ.get('LOCAL_RANK', local_rank))
     num_gpus = torch.cuda.device_count()
     torch.cuda.set_device(local_rank % num_gpus)
-    dist.init_process_group(
-        backend=backend,
-        init_method='tcp://127.0.0.1:%d' % tcp_port,
-        rank=local_rank,
-        world_size=num_gpus
-    )
+    # The launcher already supplies MASTER_ADDR, MASTER_PORT, RANK and WORLD_SIZE.
+    # Reuse its rendezvous instead of opening a second localhost TCP store.
+    dist.init_process_group(backend=backend, init_method='env://')
     rank = dist.get_rank()
-    return num_gpus, rank
+    return dist.get_world_size(), rank
 
 
 def get_dist_info():

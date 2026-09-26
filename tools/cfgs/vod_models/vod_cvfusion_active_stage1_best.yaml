@@ -1,0 +1,9 @@
+_BASE_CONFIG_: tools/cfgs/vod_models/vod_cvfusion_paper_stage1_zvalid.yaml
+
+# Canonical active configuration after the 2026-09-26 rollback.
+# Validated checkpoint:
+# output/cfgs/vod_models/vod_cvfusion_paper_stage1_zvalid/
+# paper_stage1_zvalid_v1/ckpt/checkpoint_epoch_78.pth
+#
+# This alias intentionally adds no model component.  In particular it has no
+# ROI_HEAD or RPN_BACKBONE and retains max height compression.

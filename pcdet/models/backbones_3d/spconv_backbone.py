@@ -164,6 +164,86 @@ class VoxelBackBone8x(nn.Module):
         return batch_dict
 
 
+class VoxelBackBone16xRGIter(nn.Module):
+    """SECOND backbone exposing the three voxel scales used by CVFusion.
+
+    With the paper's 0.05 m XY voxels, x_conv3/x_conv4/x_conv5 have
+    0.2/0.4/0.8 m XY resolution respectively (paper j=2,3,4).
+    """
+
+    def __init__(self, model_cfg, input_channels, grid_size, **kwargs):
+        super().__init__()
+        self.model_cfg = model_cfg
+        norm_fn = partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01)
+        self.sparse_shape = grid_size[::-1] + [1, 0, 0]
+        block = post_act_block
+
+        self.conv_input = SparseSequential(
+            SubMConv3d(input_channels, 16, 3, padding=1, bias=False,
+                       indice_key='rg_subm1'),
+            norm_fn(16), nn.ReLU())
+        self.conv1 = SparseSequential(
+            block(16, 16, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm1'))
+        self.conv2 = SparseSequential(
+            block(16, 32, 3, norm_fn=norm_fn, stride=2, padding=1,
+                  indice_key='rg_spconv2', conv_type='spconv'),
+            block(32, 32, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm2'),
+            block(32, 32, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm2'))
+        self.conv3 = SparseSequential(
+            block(32, 64, 3, norm_fn=norm_fn, stride=2, padding=1,
+                  indice_key='rg_spconv3', conv_type='spconv'),
+            block(64, 64, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm3'),
+            block(64, 64, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm3'))
+        self.conv4 = SparseSequential(
+            block(64, 64, 3, norm_fn=norm_fn, stride=2,
+                  padding=(0, 1, 1), indice_key='rg_spconv4',
+                  conv_type='spconv'),
+            block(64, 64, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm4'),
+            block(64, 64, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm4'))
+        # The last paper scale downsamples only the BEV plane. Keeping the
+        # height stride at one avoids discarding the already sparse Z signal.
+        self.conv5 = SparseSequential(
+            block(64, 64, 3, norm_fn=norm_fn, stride=(1, 2, 2),
+                  padding=1, indice_key='rg_spconv5', conv_type='spconv'),
+            block(64, 64, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm5'),
+            block(64, 64, 3, norm_fn=norm_fn, padding=1,
+                  indice_key='rg_subm5'))
+        self.num_point_features = 64
+
+    def forward(self, batch_dict):
+        input_sp_tensor = SparseConvTensor(
+            features=batch_dict['voxel_features'],
+            indices=batch_dict['voxel_coords'].int(),
+            spatial_shape=self.sparse_shape,
+            batch_size=batch_dict['batch_size'])
+        x = self.conv_input(input_sp_tensor)
+        x_conv1 = self.conv1(x)
+        x_conv2 = self.conv2(x_conv1)
+        x_conv3 = self.conv3(x_conv2)
+        x_conv4 = self.conv4(x_conv3)
+        x_conv5 = self.conv5(x_conv4)
+        batch_dict.update({
+            'encoded_spconv_tensor': x_conv4,
+            'encoded_spconv_tensor_stride': 8,
+            'multi_scale_3d_features': {
+                'x_conv1': x_conv1,
+                'x_conv2': x_conv2,
+                'x_conv3': x_conv3,
+                'x_conv4': x_conv4,
+                'x_conv5': x_conv5,
+            }
+        })
+        return batch_dict
+
+
 class VoxelResBackBone8x(nn.Module):
     def __init__(self, model_cfg, input_channels, grid_size, **kwargs):
         super().__init__()

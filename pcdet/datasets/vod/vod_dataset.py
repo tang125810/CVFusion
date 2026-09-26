@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from skimage import io
+from PIL import Image
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import box_utils, calibration_kitti, common_utils, object3d_kitti
@@ -98,6 +99,19 @@ class VodDataset(DatasetTemplate):
         if img_file.exists():
             return np.array(io.imread(img_file).shape[:2], dtype=np.int32)
         return np.array([0, 0], dtype=np.int32)
+
+    def get_image(self, idx, output_size):
+        """Load RGB image as CHW float32 in [0, 1]."""
+        img_file = self.root_split_path / 'image_2' / ('%s.jpg' % idx)
+        if not img_file.exists():
+            img_file = self.root_split_path / 'image_2' / ('%s.png' % idx)
+        if not img_file.exists():
+            raise FileNotFoundError('Missing camera image: %s' % img_file)
+        out_h, out_w = int(output_size[0]), int(output_size[1])
+        with Image.open(img_file) as image:
+            image = image.convert('RGB').resize((out_w, out_h), Image.BILINEAR)
+            array = np.asarray(image, dtype=np.float32) / 255.0
+        return np.ascontiguousarray(array.transpose(2, 0, 1))
 
     def get_label(self, idx):
         label_file = self.root_split_path / 'label_2' / ('%s.txt' % idx)
@@ -407,6 +421,27 @@ class VodDataset(DatasetTemplate):
             'frame_id': sample_idx,
             'calib': calib,
         }
+
+        if self.dataset_cfg.get('LOAD_IMAGE', False):
+            image_size = self.dataset_cfg.get('IMAGE_SIZE', [384, 608])
+            image = self.get_image(sample_idx, image_size)
+            old_h, old_w = int(img_shape[0]), int(img_shape[1])
+            if old_h <= 0 or old_w <= 0:
+                raise ValueError('Invalid image shape for frame %s: %s' % (sample_idx, img_shape))
+            intrinsic = calib.P2[:, :3].astype(np.float32).copy()
+            intrinsic[0] *= float(image_size[1]) / old_w
+            intrinsic[1] *= float(image_size[0]) / old_h
+            velo_to_cam = np.eye(4, dtype=np.float32)
+            velo_to_cam[:3, :4] = calib.V2C.astype(np.float32)
+            rect = np.eye(4, dtype=np.float32)
+            rect[:3, :3] = calib.R0.astype(np.float32)
+            cam_to_lidar = np.linalg.inv(rect @ velo_to_cam).astype(np.float32)
+            input_dict.update({
+                'images': image,
+                'camera_intrinsics': intrinsic,
+                'camera_to_lidar': cam_to_lidar,
+                'lidar_aug_matrix': np.eye(4, dtype=np.float32),
+            })
 
         if 'annos' in info:
             annos = info['annos']

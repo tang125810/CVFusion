@@ -55,7 +55,10 @@ def merge_new_config(config, new_config):
                 yaml_config = yaml.load(f, Loader=yaml.FullLoader)
             except:
                 yaml_config = yaml.load(f)
-        config.update(EasyDict(yaml_config))
+        # Recursively merge the base so nested dataset base files are also
+        # resolved.  A shallow update leaves DATA_CONFIG._BASE_CONFIG_
+        # unexpanded when a model config itself inherits another model config.
+        merge_new_config(config, yaml_config)
 
     for key, val in new_config.items():
         if not isinstance(val, dict):
