@@ -81,6 +81,34 @@ class DataAugmentor(object):
         data_dict['points'] = points
         return data_dict
 
+    def random_world_translation(self, data_dict=None, config=None):
+        """Vertical (z) jitter of the whole scene.
+
+        Motivation: the Car vertical error of the Stage1 model is 0.044 m MAD on
+        its own training frames but 0.103 m on validation - a *generalisation*
+        gap, not a lack of input information.  The existing world augmentations
+        (flip along x, rotation about z, isotropic scaling) barely move an
+        object vertically, so the network can memorise each training object's
+        height.  Shifting points, boxes and the augmentation matrix by the same
+        z offset simulates a different radar mounting height and forces the
+        vertical regression to rely on features instead of memorised heights.
+        """
+        if data_dict is None:
+            return partial(self.random_world_translation, config=config)
+        low, high = config['WORLD_TRANSLATE_Z_RANGE']
+        shift = float(np.random.uniform(low, high))
+        gt_boxes = data_dict['gt_boxes'].copy()
+        gt_boxes[:, 2] += shift
+        points = data_dict['points'].copy()
+        points[:, 2] += shift
+        if 'lidar_aug_matrix' in data_dict:
+            transform = np.eye(4, dtype=np.float32)
+            transform[2, 3] = shift
+            data_dict['lidar_aug_matrix'] = transform @ data_dict['lidar_aug_matrix']
+        data_dict['gt_boxes'] = gt_boxes
+        data_dict['points'] = points
+        return data_dict
+
     def random_world_scaling(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.random_world_scaling, config=config)

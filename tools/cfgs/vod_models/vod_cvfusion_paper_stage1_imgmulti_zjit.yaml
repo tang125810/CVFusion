@@ -1,0 +1,73 @@
+# Car vertical gap, lever 3: vertical-jitter augmentation.
+#
+# Measured (see docs/STAGE1_CANDIDATE_EXPERIMENTS.md section 7): the Car bottom
+# height error is 0.044 m MAD on the model's own training frames but 0.103 m on
+# validation, i.e. the vertical error is a *generalisation* gap.  The existing
+# world augmentations barely move an object vertically, so the network can
+# memorise each training object's height.  This config adds random_world_translation
+# with WORLD_TRANSLATE_Z_RANGE (+-0.3 m): points, boxes and lidar_aug_matrix are
+# shifted together, which simulates a different radar mounting height.
+#
+# Everything else is identical to the imgmulti best model (image backbone, VT,
+# RGITER fusion, anchors, losses, schedule).  Only the augmentation list changes.
+_BASE_CONFIG_: tools/cfgs/vod_models/vod_cvfusion_paper_stage1.yaml
+
+# Single-variable test of the image-feature hypothesis (technical report
+# section 1: "相机特征是首要待验证假设").
+#
+# Everything is identical to vod_cvfusion_paper_stage1_zvalid.yaml - the
+# corrected z-valid view lifting, vertical max pooling, the direct 128-channel
+# proposal path, no auxiliary losses, same schedule - except that the frozen
+# ImageNet Swin-T is now run in full and its stages 0..3 are aggregated back to
+# the same H/4 x W/4, 96-channel tensor that the depth head and the image
+# projection consume:
+#
+#     stage0 H/4  96 --\
+#     stage1 H/8  192 --+-- 1x1 lateral -> bilinear to H/4 -> 3x3 fuse -> 96ch
+#     stage2 H/16 384 --+
+#     stage3 H/32 768 --/
+#
+# The depth head (96->128->64), the image projection (96->64), the view
+# transform, the RGIter fusion, the anchors and the NMS are untouched, so any
+# difference against the epoch-78 baseline isolates the image-feature level.
+# This is a *candidate implementation choice*: the paper states H/4 but does not
+# publish the backbone truncation, so the result is evidence about an
+# unverified assumption, not a claim about the authors' code.
+DATA_CONFIG:
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['gt_sampling', 'placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x']
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+            - NAME: random_world_translation
+              WORLD_TRANSLATE_Z_RANGE: [-0.3, 0.3]
+
+MODEL:
+    MAP_TO_BEV:
+        POOL_METHOD: max
+    IMAGE_FUSION:
+        IMAGE_BACKBONE: multi
+        DEPTH_LOSS_WEIGHT: 0.0
+        GATE_LOSS_WEIGHT: 0.0
+        RESET_GUIDANCE_GATES: False
+        RPN_NUM_BLOCKS: 0
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.25, 0.3, 0.5, 0.7]
+
+OPTIMIZATION:
+    FIX_RANDOM_SEED: True
+    NUM_EPOCHS: 80
+    eval_interval: 5
+    early_stop:
+        enabled: True
+        metrics: ['Car_3d/moderate', 'Pedestrian_3d/moderate', 'Cyclist_3d/moderate']
+        metric_reducer: mean
+        mode: max
+        min_delta: 0.0
+        start_epoch: 5
+        patience: 35
+        save_best: True
