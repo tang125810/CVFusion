@@ -1,0 +1,166 @@
+{
+  "tag": "ep78",
+  "pred": "experiments/stage1_audit_20260926/pred_ep78_kitti",
+  "frames": 1296,
+  "classes": {
+    "Car": {
+      "all": {
+        "ap_r11": 42.18905066417329,
+        "gt": 4291,
+        "dt": 4331,
+        "tp": 1929,
+        "fp": 2402,
+        "fn": 2362
+      },
+      "0-15m": {
+        "ap_r11": 62.70192382249638,
+        "gt": 744,
+        "fn_no_prediction": 139,
+        "fn_localisation": 100,
+        "fn_total": 239
+      },
+      "15-25m": {
+        "ap_r11": 42.83155892619338,
+        "gt": 988,
+        "fn_no_prediction": 397,
+        "fn_localisation": 157,
+        "fn_total": 554
+      },
+      "25-35m": {
+        "ap_r11": 41.49486738374147,
+        "gt": 1108,
+        "fn_no_prediction": 461,
+        "fn_localisation": 172,
+        "fn_total": 633
+      },
+      "35-50m": {
+        "ap_r11": 31.640444980653015,
+        "gt": 1375,
+        "fn_no_prediction": 592,
+        "fn_localisation": 292,
+        "fn_total": 884
+      },
+      "tp_errors": {
+        "median_lateral": 0.018228505141907103,
+        "median_vertical": -0.03109973185965309,
+        "median_forward": 0.037971220385885296,
+        "p90_forward": 0.28297348163795705,
+        "median_size_lwh": [
+          0.1556142795208495,
+          -0.00589143507227452,
+          -0.04532723405430095
+        ],
+        "median_yaw_deg": 2.4332700307534245,
+        "p90_yaw_deg": 7.194513110740542
+      },
+      "fp_confusion": 0,
+      "fp_total": 2402
+    },
+    "Pedestrian": {
+      "all": {
+        "ap_r11": 41.92013756585949,
+        "gt": 3749,
+        "dt": 4161,
+        "tp": 1815,
+        "fp": 2346,
+        "fn": 1934
+      },
+      "0-15m": {
+        "ap_r11": 58.36457162713228,
+        "gt": 1229,
+        "fn_no_prediction": 438,
+        "fn_localisation": 36,
+        "fn_total": 474
+      },
+      "15-25m": {
+        "ap_r11": 31.753583867569766,
+        "gt": 1272,
+        "fn_no_prediction": 677,
+        "fn_localisation": 143,
+        "fn_total": 820
+      },
+      "25-35m": {
+        "ap_r11": 53.99829589023133,
+        "gt": 494,
+        "fn_no_prediction": 151,
+        "fn_localisation": 45,
+        "fn_total": 196
+      },
+      "35-50m": {
+        "ap_r11": 34.09007789493683,
+        "gt": 716,
+        "fn_no_prediction": 329,
+        "fn_localisation": 95,
+        "fn_total": 424
+      },
+      "tp_errors": {
+        "median_lateral": 0.021469706201092897,
+        "median_vertical": 0.04025102261512714,
+        "median_forward": -0.018162041493472003,
+        "p90_forward": 0.10786975451584838,
+        "median_size_lwh": [
+          0.04764102162653028,
+          0.024116037073468544,
+          0.031035990312654027
+        ],
+        "median_yaw_deg": 6.967449081520709,
+        "p90_yaw_deg": 38.82638100896034
+      },
+      "fp_confusion": 0,
+      "fp_total": 2346
+    },
+    "Cyclist": {
+      "all": {
+        "ap_r11": 70.00737704215332,
+        "gt": 1434,
+        "dt": 2957,
+        "tp": 1159,
+        "fp": 1798,
+        "fn": 275
+      },
+      "0-15m": {
+        "ap_r11": 70.52204182953592,
+        "gt": 205,
+        "fn_no_prediction": 29,
+        "fn_localisation": 6,
+        "fn_total": 35
+      },
+      "15-25m": {
+        "ap_r11": 87.65024480999519,
+        "gt": 667,
+        "fn_no_prediction": 45,
+        "fn_localisation": 11,
+        "fn_total": 56
+      },
+      "25-35m": {
+        "ap_r11": 54.162546665867126,
+        "gt": 277,
+        "fn_no_prediction": 63,
+        "fn_localisation": 20,
+        "fn_total": 83
+      },
+      "35-50m": {
+        "ap_r11": 38.35481279114701,
+        "gt": 270,
+        "fn_no_prediction": 66,
+        "fn_localisation": 31,
+        "fn_total": 97
+      },
+      "tp_errors": {
+        "median_lateral": 0.014632351888644202,
+        "median_vertical": 0.026326993017055766,
+        "median_forward": -0.10670219077124798,
+        "p90_forward": 0.14781495878817463,
+        "median_size_lwh": [
+          -0.026122062511580557,
+          0.012087649829136016,
+          0.06676786357247588
+        ],
+        "median_yaw_deg": 3.7043951652587443,
+        "p90_yaw_deg": 11.559507924207905
+      },
+      "fp_confusion": 1,
+      "fp_total": 1798
+    }
+  }
+}

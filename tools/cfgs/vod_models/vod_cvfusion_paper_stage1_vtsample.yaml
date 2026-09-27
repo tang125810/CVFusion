@@ -1,0 +1,52 @@
+_BASE_CONFIG_: tools/cfgs/vod_models/vod_cvfusion_paper_stage1.yaml
+
+# Single-variable test of the view-transformation hypothesis (technical report
+# section 2: "视角转换不能只按输出 shape 判定等价").
+#
+# Identical to vod_cvfusion_paper_stage1_zvalid.yaml - same frozen Swin-T stage
+# 0 image features, same depth head, same RGIter fusion, same anchors, same
+# schedule, same 384x608 input - except for how the camera BEV is produced:
+#
+#   scatter (baseline, epoch-78 checkpoint)
+#       one ray per feature pixel x 64 depth bins -> augmented radar frame ->
+#       floor to a BEV cell -> index_add_ of feature * depth probability.
+#
+#   sampling (this config)
+#       BEV voxel centres of the detector volume (0.2 m x 0.2 m x 8 height
+#       levels) -> undo the BEV augmentation -> camera -> project -> bilinear
+#       grid_sample of the image feature, weighted by a bilinear read of the
+#       depth distribution at the cell's depth bin.
+#
+# This is the direction of the view transforms the paper cites (CaDDN, LXL):
+# the geometry is evaluated at the target voxel centres with interpolation on
+# the image side instead of scattering image pixels into nearest cells.  The
+# output tensor has the same shape and the same BEV cell convention as the
+# baseline, so any difference isolates the view transformation.
+# Geometry acceptance: experiments/stage1_audit_20260926/verify_vt_sampling.py
+# (delta tests reconstruct the exact expected cell set independently).
+MODEL:
+    MAP_TO_BEV:
+        POOL_METHOD: max
+    IMAGE_FUSION:
+        VT_MODE: sampling
+        VT_NUM_Z: 8
+        DEPTH_LOSS_WEIGHT: 0.0
+        GATE_LOSS_WEIGHT: 0.0
+        RESET_GUIDANCE_GATES: False
+        RPN_NUM_BLOCKS: 0
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.25, 0.3, 0.5, 0.7]
+
+OPTIMIZATION:
+    FIX_RANDOM_SEED: True
+    NUM_EPOCHS: 80
+    eval_interval: 5
+    early_stop:
+        enabled: True
+        metrics: ['Car_3d/moderate', 'Pedestrian_3d/moderate', 'Cyclist_3d/moderate']
+        metric_reducer: mean
+        mode: max
+        min_delta: 0.0
+        start_epoch: 5
+        patience: 35
+        save_best: True

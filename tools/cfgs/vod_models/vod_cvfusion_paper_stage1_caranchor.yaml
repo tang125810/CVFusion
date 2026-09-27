@@ -1,0 +1,85 @@
+_BASE_CONFIG_: tools/cfgs/vod_models/vod_cvfusion_paper_stage1.yaml
+
+# Car-only anchor bottom-height fix (technical report step 5 follow-up,
+# motivated by the error decomposition in analyse_errors.py).
+#
+# Diagnosis on the epoch-78 predictions:
+#   2351 Car GT have a prediction with BEV IoU >= 0.5, but only 1929 reach
+#   3D IoU >= 0.5 -- 422 GT are "BEV-correct, 3D-failing".  For those 422:
+#     bottom-height error  median -0.24 m, 68% off by more than 0.3 m
+#     length error         median +0.04 m, 49% off by more than 0.3 m
+#     height/width errors  negligible (<4%)
+#     distance             72% beyond 25 m
+#   The vertical placement of distant cars dominates the Car 3D AP gap
+#   (Car 3D 42.8 vs Car BEV 52.8 on the best model).
+#
+# The inherited KITTI anchor places the Car bottom at -1.78 m in the radar
+# frame while the validation data has its median at -0.79 m, i.e. the head has
+# to learn a ~1 m constant offset.  This config changes ONLY the Car anchor
+# bottom height (-1.78 -> -0.8); sizes, rotations, thresholds, the pedestrian
+# and cyclist anchors, and everything else stay identical to the epoch-78
+# baseline.  Anchors change semantics, so the head trains from scratch.
+
+# Corrected paper-aligned Stage1 run.  View lifting now rejects depth samples
+# outside the configured Z volume.  Auxiliary depth/gate objectives are kept
+# disabled because they are not part of the published training objective.
+MODEL:
+    # Locked rollback state for the best Stage1 checkpoint (epoch 78).
+    # Keep vertical max pooling and the direct 128-channel proposal path.
+    # Do not enable height attention, the experimental BEV RPN, or a RoI head.
+    MAP_TO_BEV:
+        POOL_METHOD: max
+    IMAGE_FUSION:
+        DEPTH_LOSS_WEIGHT: 0.0
+        GATE_LOSS_WEIGHT: 0.0
+        RESET_GUIDANCE_GATES: False
+        RPN_NUM_BLOCKS: 0
+    DENSE_HEAD:
+        ANCHOR_GENERATOR_CONFIG: [
+            {
+                'class_name': 'Car',
+                'anchor_sizes': [[3.9, 1.6, 1.56]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.8],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.6,
+                'unmatched_threshold': 0.45
+            },
+            {
+                'class_name': 'Pedestrian',
+                'anchor_sizes': [[0.8, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            },
+            {
+                'class_name': 'Cyclist',
+                'anchor_sizes': [[1.76, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            }
+        ]
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.25, 0.3, 0.5, 0.7]
+
+OPTIMIZATION:
+    FIX_RANDOM_SEED: True
+    NUM_EPOCHS: 80
+    eval_interval: 5
+    early_stop:
+        enabled: True
+        metrics: ['Car_3d/moderate', 'Pedestrian_3d/moderate', 'Cyclist_3d/moderate']
+        metric_reducer: mean
+        mode: max
+        patience: 35
+        min_delta: 0.0
+        start_epoch: 5
+        save_best: True

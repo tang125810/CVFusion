@@ -1,0 +1,75 @@
+{
+  "frames": 400,
+  "frame_stride": 3,
+  "summary": {
+    "Car": {
+      "n_gt": 1410,
+      "median_best_iou": 0.7585393077222835,
+      "mean_best_iou": 0.718694925556072,
+      "frac_above_matched": 0.8276595744680851,
+      "frac_below_unmatched": 0.02198581560283688,
+      "anchor_size_lwh": [
+        3.9,
+        1.6,
+        1.56
+      ],
+      "anchor_bottom": -1.78,
+      "gt_median_lwh": [
+        3.9827966690063477,
+        1.8267590999603271,
+        1.5239062309265137
+      ],
+      "gt_median_bottom_z": -0.7935551404953003,
+      "gt_bottom_p5_p95": [
+        -2.6949990928173064,
+        -0.32465329170227075
+      ]
+    },
+    "Pedestrian": {
+      "n_gt": 1092,
+      "median_best_iou": 0.5352910907122261,
+      "mean_best_iou": 0.5392553920118724,
+      "frac_above_matched": 0.5998168498168498,
+      "frac_below_unmatched": 0.03296703296703297,
+      "anchor_size_lwh": [
+        0.8,
+        0.6,
+        1.73
+      ],
+      "anchor_bottom": -0.6,
+      "gt_median_lwh": [
+        0.5861234664916992,
+        0.6143060922622681,
+        1.6837254762649536
+      ],
+      "gt_median_bottom_z": -0.73052579164505,
+      "gt_bottom_p5_p95": [
+        -2.672735801339149,
+        -0.27332378625869724
+      ]
+    },
+    "Cyclist": {
+      "n_gt": 475,
+      "median_best_iou": 0.5702258899301001,
+      "mean_best_iou": 0.5762347732938631,
+      "frac_above_matched": 0.7094736842105264,
+      "frac_below_unmatched": 0.016842105263157894,
+      "anchor_size_lwh": [
+        1.76,
+        0.6,
+        1.73
+      ],
+      "anchor_bottom": -0.6,
+      "gt_median_lwh": [
+        1.945103406906128,
+        0.7283275723457336,
+        1.7488267421722412
+      ],
+      "gt_median_bottom_z": -0.7092735767364502,
+      "gt_bottom_p5_p95": [
+        -1.7776326179504394,
+        -0.2459654808044434
+      ]
+    }
+  }
+}
