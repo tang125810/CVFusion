@@ -29,11 +29,16 @@ class MultiScaleHeightCompression(nn.Module):
             raise ValueError('OCCUPANCY_STRIDES and OCCUPANCY_DILATION must have three entries')
         self.projections = nn.ModuleList([
             nn.Sequential(
-                nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+                nn.Conv2d(in_ch + (2 if model_cfg.get('HEIGHT_STATS', False) else 0),
+                          out_ch, 3, padding=1, bias=False),
                 nn.BatchNorm2d(out_ch, eps=1e-3, momentum=0.01),
                 nn.ReLU(inplace=True))
             for in_ch, out_ch in zip(in_channels, out_channels)
         ])
+        # HEIGHT_STATS appends two vertical-statistics channels (mean z and
+        # log occupancy) to the max-pooled features before the projection; the
+        # module's output shape is unchanged, so nothing downstream moves.
+        self.height_stats = bool(model_cfg.get('HEIGHT_STATS', False))
         # Sparse height attention preserves the vertical location discarded by
         # max pooling without materialising a prohibitively large dense 3D
         # tensor.  The final 1x1 fusion starts as an exact max-pool identity so
@@ -112,6 +117,47 @@ class MultiScaleHeightCompression(nn.Module):
             positioned * weights[:, None])
         return output.view(batch_size, height, width, -1).permute(0, 3, 1, 2).contiguous()
 
+    @staticmethod
+    def _sparse_height_stats_to_bev(sparse_tensor):
+        """Vertical statistics that max pooling throws away.
+
+        The error decomposition showed the Car 3D AP gap is a *vertical*
+        precision problem (fixing the predicted bottom height alone would take
+        Car 3D AP from 42.8 to 52.4), yet the BEV map that feeds the RPN is a
+        max over height cells, so the head has no direct vertical cue at all -
+        the coarse 0.4-0.8 m z cells only survive as "was occupied".
+
+        This returns two channels that restore the missing cue cheaply:
+          * occupancy-weighted mean z of the occupied cells, normalised to [-1, 1]
+          * log1p of the occupied cell count, normalised by the max count
+        Both are (B, 1, H, W); they are concatenated to the max-pooled features
+        before the projection convolution, so the module's output shape and every
+        downstream tensor stay exactly as before.
+        """
+        features = sparse_tensor.features
+        indices = sparse_tensor.indices.long()
+        batch_size = sparse_tensor.batch_size
+        depth, height, width = (int(x) for x in sparse_tensor.spatial_shape)
+        linear = indices[:, 0] * (height * width) + indices[:, 2] * width + indices[:, 3]
+        num_cells = batch_size * height * width
+
+        z = indices[:, 1].to(features.dtype)
+        count = features.new_zeros((num_cells,))
+        count.scatter_add_(0, linear, torch.ones_like(z))
+        z_sum = features.new_zeros((num_cells,))
+        z_sum.scatter_add_(0, linear, z)
+        mean_z = z_sum / count.clamp_min(1.0)                      # 0 .. depth-1
+        mean_z = mean_z * (2.0 / max(depth - 1, 1)) - 1.0          # -> [-1, 1]
+
+        occupied = (count > 0).to(features.dtype)
+        log_count = torch.log1p(count)
+        log_count = log_count / max(float(torch.log1p(count.max()).item()), 1e-6)
+        log_count = log_count * occupied                            # keep empty cells at 0
+
+        stats = torch.stack((mean_z, log_count), dim=1)             # (num_cells, 2)
+        stats = stats.view(batch_size, height, width, 2).permute(0, 3, 1, 2).contiguous()
+        return stats
+
     def forward(self, batch_dict):
         sparse_features = batch_dict['multi_scale_3d_features']
         bev_features = {}
@@ -124,6 +170,9 @@ class MultiScaleHeightCompression(nn.Module):
                 height_bev = self._sparse_height_attention_to_bev(
                     sparse_features[key], idx)
                 max_bev = self.height_fusion[idx](torch.cat((max_bev, height_bev), dim=1))
+            if self.height_stats:
+                max_bev = torch.cat(
+                    (max_bev, self._sparse_height_stats_to_bev(sparse_features[key])), dim=1)
             bev_features['radar_bev_%d' % idx] = self.projections[idx](max_bev)
             height, width = bev_features['radar_bev_%d' % idx].shape[-2:]
             stride = int(self.occupancy_strides[idx])
